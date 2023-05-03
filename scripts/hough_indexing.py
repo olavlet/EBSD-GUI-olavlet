@@ -110,6 +110,11 @@ class HiSetupDialog(QDialog):
             path.join(self.working_dir, "project_settings.txt")
         )
         self.program_settings = SettingFile("advanced_settings.txt")
+        try:
+            lazy = eval(self.program_settings.read("Lazy Loading"))
+        except:
+            lazy = False
+        self.ui.checkBoxLazy.setChecked(lazy)
 
         try:
             self.convention = self.setting_file.read("Convention")
@@ -291,7 +296,9 @@ class HiSetupDialog(QDialog):
                 item = QTableWidgetItem(str(entry))
                 item.setFlags(item.flags() ^ Qt.ItemIsEditable)
                 if entry == phase.color_rgb:
-                    item.setBackground(QColor.fromRgbF(*entry))
+                    color = QColor.fromRgbF(*entry)
+                    item = QTableWidgetItem(phase.color)
+                    item.setBackground(color)
                 phasesTable.setItem(row, col, item)
             row += 1
         self.setAvailableButtons()
@@ -397,9 +404,14 @@ class HiSetupDialog(QDialog):
             )
         else:
             index_data_path = None
-        io.save(path.join(self.dir_out, "xmap_hi.h5"), xmap)
-        io.save(path.join(self.dir_out, "xmap_hi.ang"), xmap)
-        print("Result was saved as xmap_hi.ang and xmap_hi.h5")
+        name = ""
+        for phase_id, phase in xmap.phases_in_data:
+            if phase_id != -1:
+                name += f"{phase.name}_"
+        name = f"{name}xmap"
+        io.save(path.join(self.dir_out, f"{name}.h5"), xmap)
+        io.save(path.join(self.dir_out, f"{name}.ang"), xmap)
+        print(f"Result was saved as {name}.ang and {name}.h5")
         for key in ["quality", "phase", "orientation"]:
             optionEnabled, optionExecute = options.get(key)
             if optionEnabled:

@@ -108,6 +108,7 @@ class AppWindow(QMainWindow):
         )
         self.ui.dockWidgetImageViewer.setFocus()
         self.ui.dockWidgetJobManager.setHidden(True)
+        self.ui.dockWidgetSignalNavigation.setHidden(True)
         self.ui.statusbar.addPermanentWidget(self.ui.threadsLabel)
         self.systemExplorer.pathChanged.connect(
             lambda new_path: self.updateMenuButtons(new_path)
@@ -466,7 +467,7 @@ if __name__ == "__main__":
     ):
         APP.show()
         print(
-            """EBSP Indexer  Copyright (C) 2023  EBSP Indexer developers 
+            """EBSP Indexer  Copyright (C) 2023  EBSP Indexer Developers 
 This program comes with ABSOLUTELY NO WARRANTY; for details see COPYING.txt.
 This is free software, and you are welcome to redistribute it under certain conditions; see COPYING.txt for details.""",
         )

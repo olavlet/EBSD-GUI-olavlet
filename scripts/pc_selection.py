@@ -275,7 +275,7 @@ class PCSelectionDialog(QDialog):
         self.cursor.set_active(True)
 
         self.iq = self.s.get_image_quality()
-        self.iq = self.iq.compute()
+        #self.iq = self.iq.compute()
         self.ui.MplWidget.canvas.ax.imshow(
             self.iq,
             cmap="gray",

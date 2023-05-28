@@ -53,6 +53,9 @@ class PatterCenterDialog(QDialog):
         self.fileBrowserOF = FileBrowser(mode=FileBrowser.OpenFile, filter_name="*.h5")
 
     def setupInitialSettings(self):
+        """
+        Reads parameters from project_settings.txt, advanced_settings.txt
+        """
         self.setting_file = SettingFile(
             path.join(path.dirname(self.setting_path), "project_settings.txt")
         )
@@ -124,6 +127,9 @@ class PatterCenterDialog(QDialog):
         self.ui.buttonRemovePhase.setEnabled(enable)
 
     def setupCalibrationPatterns(self):
+        """
+        Finds calibration patterns by reading Setting.txt file. Removes static and dynamic background.
+        """
         self.pattern_index = 0
         self.s_cal = kp.load(self.setting_path)
         sig_shape = self.s_cal.axes_manager.signal_shape[::-1]
@@ -253,8 +259,6 @@ class PatterCenterDialog(QDialog):
         self.changeStateOfButtons()
 
     def removePhase(self):
-        # if str(self.ui.listPhases.currentItem().text()) is None:
-        #    self.ui.listPhases.setCurrentRow(-1)
         self.mp_paths.pop(str(self.ui.listPhases.currentItem().text()))
         self.ui.listPhases.takeItem(self.ui.listPhases.currentRow())
         self.is_mp_paths_updated = True
@@ -298,6 +302,9 @@ class PatterCenterDialog(QDialog):
         self.plotData()
 
     def refinePatternCenter(self):
+        """
+        Refines pattern center for selected calibration pattern using pcopt.optimize
+        """
         self.updatePCArrayFromSpinBox()
 
         # Checks which phase to use from list of phases
@@ -347,6 +354,9 @@ class PatterCenterDialog(QDialog):
         self.is_mp_paths_updated = False
 
     def plotData(self):
+        """
+        Plots geometrical simulations on calibraion pattern. Updates misfit variable.
+        """
         self.updatePCDict(self.pattern_index, self.phase, self.pc, self.pattern_ignored)
 
         # Updates data from master pattern (simulator_dict) if phase list has been updated
@@ -440,6 +450,9 @@ class PatterCenterDialog(QDialog):
             self.pattern_ignored = False
 
     def saveAndExit(self):
+        """
+        Saves average pattern center to project_setting.txt
+        """
         self.setting_file.delete_all_entries()  # clean up initial dictionary
 
         ### Sample parameters

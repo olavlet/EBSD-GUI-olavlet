@@ -47,6 +47,9 @@ class PCSelectionDialog(QDialog):
         self.coordinates = []
 
     def setupInitialSettings(self):
+        """
+        Reads parameters from project_settings.txt, advanced_settings.txt
+        """
         self.setting_file = SettingFile(
             path.join(self.working_dir, "project_settings.txt")
         )
@@ -361,6 +364,9 @@ class PCSelectionDialog(QDialog):
 ### PATTERN CENTER OPTIMIZATION ###
 
     def runPatternCenterOpimization(self):
+        """
+        Initializes patterCenterOptimization in a thread
+        """
         basename, _ = path.basename(self.pattern_path).split(".")
         save_dir = path.join(self.working_dir, f"{basename}_PC")
         self.inlier_limit = float(self.ui.spinBoxInlier.value())
@@ -415,8 +421,11 @@ class PCSelectionDialog(QDialog):
         return mp_i
 
     def retrieveMPData(self):
-        self.energy = self.s.metadata.Acquisition_instrument.SEM.beam_energy
+        """
+        Makes sure a maximum of one FCC and one BCC phase are used for optmization
+        """
 
+        self.energy = self.s.metadata.Acquisition_instrument.SEM.beam_energy
         self.mp_dict = {}
 
         FCCavailable, BCCavailable = True, True
@@ -463,7 +472,9 @@ class PCSelectionDialog(QDialog):
         return simulator_dict
 
     def drawPCs(self, save_dir):
-        # Get the right format for coordinates
+        """
+        Get the right format for coordinates
+        """
         cr = np.array(self.coordinates).T
         self.rc = cr[::-1]
         self.s_cal = kp.signals.LazyEBSD(self.s.data.vindex[tuple(self.rc)])
@@ -480,6 +491,16 @@ class PCSelectionDialog(QDialog):
         fig.savefig(path.join(save_dir, "maps_pc_cal_patterns.png"), **self.savefig_kw)
 
     def optimizePC(self, simulator_dict, save_dir):
+        """
+        Optimizes and refines pattern center. Creates figures for geometrical simulation, scatter plot and a txt file containing the results. 
+
+        Parameters
+        ----------
+        simulator_dict : dict
+            Dictionary containing master pattern(s) of specified FCC and/or BCC phase.
+        save_dir : str
+            Directory where text file and pictures from optimization will be saved.
+        """
         phase_list = PhaseList()
         for mp in self.mp_dict.values():
             phase_list.add(mp.phase)
@@ -581,6 +602,9 @@ class PCSelectionDialog(QDialog):
         f.close()
 
     def save_project_settings(self):
+        """
+        Saves average pattern center to project_setting.txt
+        """
         self.setting_file.delete_all_entries()  # clean up initial dictionary
 
         ### Sample parameters

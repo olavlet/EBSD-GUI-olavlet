@@ -18,12 +18,14 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QMainWindow, QTableWidgetItem
 
 from scripts.create_phase import NewPhaseDialog
+from scripts.pc_from_wd import pc_from_wd
 from ui.ui_hi_setup import Ui_HISetupDialog
 from utils import FileBrowser, SettingFile, sendToJobManager
 
 # Ignore warnings to avoid crash with integrated console
 warnings.filterwarnings("ignore")
 
+ALLOWED_SPACE_GROUPS = ["Fm-3m", "Im-3m"] # FCC and BCC
 
 class HiSetupDialog(QDialog):
     def __init__(self, parent: QMainWindow, pattern_path: str):
@@ -39,10 +41,10 @@ class HiSetupDialog(QDialog):
 
         # Load pattern-file to get acquisition resolution
         try:
-            s_prew: LazyEBSD = kp.load(self.pattern_path, lazy=True)
+            s_preview: LazyEBSD = kp.load(self.pattern_path, lazy=True)
         except Exception as e:
             raise e
-        self.binnings = self.getBinningShapes(s_prew)
+        self.binnings = self.getBinningShapes(s_preview)
         self.colors = [
             "blue",
             "orange",
@@ -53,7 +55,7 @@ class HiSetupDialog(QDialog):
         self.phases = PhaseList()
 
         self.setupConnections()
-        self.load_parameters()
+        self.load_parameters(s_preview)
         self.setAvailableButtons()
 
         # Matplotlib configuration
@@ -104,7 +106,7 @@ class HiSetupDialog(QDialog):
             ),
         }
 
-    def load_parameters(self):
+    def load_parameters(self, signal: LazyEBSD):
         # Read current setting from project_settings.txt, advanced_settings.txt
         self.setting_file = SettingFile(
             path.join(self.working_dir, "project_settings.txt")
@@ -117,9 +119,10 @@ class HiSetupDialog(QDialog):
         self.ui.checkBoxLazy.setChecked(lazy)
 
         try:
-            self.convention = self.setting_file.read("Convention")
+            convention = self.setting_file.read("Convention")
         except:
-            self.convention = self.program_settings.read("Convention")
+            convention = self.program_settings.read("Convention")
+        self.ui.comboBoxConvention.setCurrentText(convention)
         pc_params = (
             self.ui.patternCenterX,
             self.ui.patternCenterY,
@@ -130,18 +133,17 @@ class HiSetupDialog(QDialog):
             for i, param in enumerate(pc_params):
                 param.setValue(float(pc[i]))
         except:
-            for param in pc_params:
-                param.setValue(0.5)
-            # if self.s_cal.metadata.Acquisition_instrument.SEM.microscope == "ZEISS SUPRA55 VP":
-            #     self.pc = [
-            #         0.5605-0.0017*float(self.working_distance),
-            #         1.2056-0.0225*float(self.working_distance),
-            #         0.483,
-            #     ]
-            # else:
-            #     self.pc = np.array([0.5000, 0.5000, 0.5000])
-
-        self.ui.comboBoxConvention.setCurrentText(self.convention)
+            try:
+                microscope = signal.metadata.Acquisition_instrument.SEM.microscope
+                working_distance = (
+                    signal.metadata.Acquisition_instrument.SEM.working_distance
+                )
+                pc: list[float] = pc_from_wd(microscope, working_distance, convention)
+                for i, param in enumerate(pc_params):
+                    param.setValue(pc[i])
+            except:
+                for value, param in zip((0.5, 0.8, 0.5), pc_params):
+                    param.setValue(value)
         try:
             self.colors = json.loads(self.program_settings.read("Colors"))
         except:
@@ -181,7 +183,7 @@ class HiSetupDialog(QDialog):
                     color=params["color"],
                 )
                 i += 1
-            except Exception as e:
+            except:
                 break
 
     def save_parameters(self):
@@ -209,9 +211,6 @@ class HiSetupDialog(QDialog):
                 phase_idx += 1
         self.setting_file.write("Convention", options["convention"].upper())
         self.setting_file.write("PC", options["pc"])
-        # self.setting_file.write("X star", pc[0])
-        # self.setting_file.write("Y star", pc[1])
-        # self.setting_file.write("Z star", pc[2])
         self.setting_file.write("Binning", options["binning"])
         self.setting_file.save()
 
@@ -238,7 +237,7 @@ class HiSetupDialog(QDialog):
                     mp.phase.color = self.colors[len(self.phases.ids) - 1]
                     self.mp_paths[mp.phase.name] = mp_path
                 except Exception as e:
-                    print("Phase could not be loaded from master pattern", e)
+                    print(f"Phase could not be loaded from master pattern: \n{e}")
             self.updatePhaseTable()
 
     def add_phase(
@@ -294,11 +293,11 @@ class HiSetupDialog(QDialog):
             ]
             for col, entry in enumerate(entries):
                 item = QTableWidgetItem(str(entry))
-                item.setFlags(item.flags() ^ Qt.ItemIsEditable)
                 if entry == phase.color_rgb:
                     color = QColor.fromRgbF(*entry)
                     item = QTableWidgetItem(phase.color)
                     item.setBackground(color)
+                item.setFlags(item.flags() ^ Qt.ItemIsEditable)
                 phasesTable.setItem(row, col, item)
             row += 1
         self.setAvailableButtons()
@@ -335,6 +334,11 @@ class HiSetupDialog(QDialog):
                 add_phase_flag = False
                 display_message = True
                 message = "Current version of PyEBSDIndex supports maximum two phases (FCC, BCC)"
+        for _, ph in self.phases:
+            if ph.space_group.short_name not in ALLOWED_SPACE_GROUPS:
+                ok_flag = False
+                display_message = True
+                message = f"Structure {ph.space_group.short_name} in {ph.name} is currently not supported, only CUBIC Crystal Systems"
         self.ui.buttonBox.button(QDialogButtonBox.Ok).setEnabled(ok_flag)
         self.ui.checkBoxPhase.setEnabled(phase_map_flag)
         self.ui.checkBoxPhase.setChecked(phase_map_flag)
@@ -399,9 +403,7 @@ class HiSetupDialog(QDialog):
         if options["data"]:
             index_data_path = path.join(self.dir_out, "index_data.npy")
             np.save(index_data_path, data)
-            print(
-                f"Saved index data array to {index_data_path}"
-            )
+            print(f"Saved index data array to {index_data_path}")
         else:
             index_data_path = None
         name = ""
@@ -422,6 +424,7 @@ class HiSetupDialog(QDialog):
                         optionExecute(xmap)
                 except Exception as e:
                     print(f"Could not save {key}_map:\n{e}")
+                    raise e
         print("Logging parameters used ...")
         log_hi_parameters(
             self.pattern_path,
@@ -432,7 +435,7 @@ class HiSetupDialog(QDialog):
             convention=options["convention"],
             binning=binning,
             pattern_center=pc,
-            index_data_path=index_data_path
+            index_data_path=index_data_path,
         )
         print(f"Finished indexing {self.pattern_name}")
 
@@ -487,8 +490,6 @@ class HiSetupDialog(QDialog):
         Plot phase map
         """
         print("Saving phase map ...")
-        # for i, ph in enumerate(self.phases):
-        #     xmap.phases[ph].color = self.colors[i]
         fig = xmap.plot(return_figure=True, remove_padding=True)
         fig.savefig(path.join(self.dir_out, "phase_map.png"), **self.savefig_kwds)
 
@@ -512,7 +513,7 @@ class HiSetupDialog(QDialog):
         """
         print("Saving inverse pole figure map ...")
         v_ipf = Vector3d(ckey_direction)
-        sym = xmap.phases[0].point_group
+        sym = xmap.phases_in_data[xmap.phase_id[0]].point_group
         ckey = plot.IPFColorKeyTSL(sym, v_ipf)
         print(ckey)
         fig_ckey = ckey.plot(return_figure=True)
@@ -526,7 +527,7 @@ class HiSetupDialog(QDialog):
             ax_ckey.patch.set_facecolor("None")
         else:
             fig_ckey.savefig(
-                path.join(self.dir_out, "orientation_colour_key.png"),
+                path.join(self.dir_out, "orientation_color_key.png"),
                 **self.savefig_kwds,
             )
         fig.savefig(path.join(self.dir_out, "IPF.png"), **self.savefig_kwds)
@@ -542,7 +543,7 @@ def log_hi_parameters(
     pattern_center: np.ndarray = None,
     convention: str = "BRUKER",
     binning: int = 1,
-    index_data_path = None
+    index_data_path=None,
 ):
     """
     Assumes convention is BRUKER for pattern center if none is given

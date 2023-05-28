@@ -1,6 +1,6 @@
 import os.path as path
 import warnings
-from typing import Optional, Any, Union
+from typing import Any, Optional, Tuple, Union
 
 
 class SettingFile:
@@ -11,7 +11,6 @@ class SettingFile:
         try:
             self.file = open(file_path, "r")
             for line in self.file:
-
                 if line.strip():  # check if line is not empty
                     (key, value) = line.split(self.sep)
                     self.dict[key] = value
@@ -54,14 +53,18 @@ class SettingFile:
         self.file.close()
 
 
-def get_setting_file_bottom_top(start_path: str, setting_name: str, return_dir_path: bool = False):
+def get_setting_file_bottom_top(
+    start_path: str, setting_name: str, return_dir_path: bool = False
+) -> Union[SettingFile, Tuple[SettingFile, str]]:
     """
-    Searches for a file named setting_name recursivly by iterating the path hierarchy
+    Searches for a setting file recursivly by iterating the path hierarchy
     from bottom to top.
 
-    Returns a SettingFile from the found setting file. If not found returns None.
-    If return_dir_path = True, a tuple is returned where the first element is the SettingFile
-    and the second is the directory path of the setting_name.
+    Returns a SettingFile from the found setting file.
+    If not found returns None.
+    If return_dir_path = True, a tuple is returned where the first
+    element is the SettingFile and the second is the directory path
+    of the setting_name.
 
     Parameters
     ----------
@@ -71,6 +74,15 @@ def get_setting_file_bottom_top(start_path: str, setting_name: str, return_dir_p
         The targeted name of the settings file, e.g. "Setting.txt"
     return_dir_path : bool
         Whether the directory path of the found setting file should also be retured.
+
+
+    Returns
+    -------
+    SettingFile
+        A SettingFile object which was initialized from the found path
+    String
+        The directory path of the found setting file, returned if `return_dir_path = True`
+
     """
     if path.isfile(start_path):
         dir_path = path.dirname(start_path)
@@ -78,15 +90,8 @@ def get_setting_file_bottom_top(start_path: str, setting_name: str, return_dir_p
         dir_path = start_path
     while dir_path != path.dirname(dir_path):
         if path.isfile(path.join(dir_path, setting_name)):
-            if return_dir_path:
-                return (SettingFile(path.join(dir_path, setting_name)), dir_path)
-            else:
-                return SettingFile(path.join(dir_path, setting_name))
+            setting = SettingFile(path.join(dir_path, setting_name))
+            return (setting, dir_path) if return_dir_path else setting
         else:
             dir_path = path.dirname(dir_path)
-    if return_dir_path:
-        print(f"Could not find {setting_name}")
-        return (None, None)
-    else:
-        print(f"Could not find {setting_name}")
-        return None
+    return (None, None) if return_dir_path else None

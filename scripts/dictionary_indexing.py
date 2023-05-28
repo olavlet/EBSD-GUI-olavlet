@@ -11,9 +11,11 @@ from matplotlib_scalebar.scalebar import ScaleBar
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from orix import io, plot, sampling
 from orix.crystal_map import CrystalMap, PhaseList
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QTableWidgetItem
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QTableWidgetItem
 
+from scripts.pc_from_wd import pc_from_wd
 from ui.ui_di_setup import Ui_DiSetupDialog
 from utils import FileBrowser, SettingFile, sendToJobManager
 
@@ -114,7 +116,7 @@ class DiSetupDialog(QDialog):
 
         if self.program_settings.read("Lazy Loading") == "False":
             self.ui.checkBoxLazy.setChecked(False)
-        
+
         try:
             if self.program_settings.read("Refine orientations") == "True":
                 self.ui.checkBoxRefine.setChecked(True)
@@ -125,7 +127,16 @@ class DiSetupDialog(QDialog):
         try:
             self.pc = np.array(eval(self.setting_file.read("PC")))
         except:
-            self.pc = np.array((0.500, 0.800, 0.500))
+            try:
+                microscope = ebsd_signal.metadata.Acquisition_instrument.SEM.microscope
+                working_distance = (
+                    ebsd_signal.metadata.Acquisition_instrument.SEM.working_distance
+                )
+                self.pc: list[float] = pc_from_wd(
+                    microscope, working_distance, self.convention
+                )
+            except:
+                self.pc = np.array((0.500, 0.800, 0.500))
 
         self.ui.patternCenterX.setValue(self.pc[0])
         self.ui.patternCenterY.setValue(self.pc[1])
@@ -326,6 +337,7 @@ class DiSetupDialog(QDialog):
                     color = QColor.fromRgbF(*entry)
                     item = QTableWidgetItem(ph.color)
                     item.setBackground(color)
+                item.setFlags(item.flags() ^ Qt.ItemIsEditable)
                 phaseTable.setItem(row, col, item)
             row += 1
 
@@ -402,14 +414,17 @@ class DiSetupDialog(QDialog):
             Returns dictionary with all master patterns
         """
         mp_dict = {}
-        for i, ph in self.phaseList:
+        for _, ph in self.phaseList:
             file_mp = path.join(self.mpPaths[ph.name])
+            load_kwargs = {"hemisphere": "both"}
+            if ph.point_group.contains_inversion:
+                load_kwargs["hemisphere"] = "upper"
             mp = kp.load(
                 file_mp,
                 energy=self.energy,  # single energies like 10, 11, 12 etc. or a range like (10, 20)
                 projection="lambert",  # stereographic, lambert
-                hemisphere="both",  # upper, lower
                 lazy=True,
+                **load_kwargs
             )
             if mp.phase.name == "":
                 mp.phase.name = ph.name
@@ -475,9 +490,9 @@ class DiSetupDialog(QDialog):
 
         plt.close(fig)
 
-    def save_orientation_similairty_map(self, crystal_map: CrystalMap):
+    def save_orientation_similarty_map(self, crystal_map: CrystalMap, filedir: str, filename: str):
         """
-        Takes in a dictionary with crystal maps and generates an orientation similarity map for each phase
+        Takes in a crystal maps and generates and saves an orientation similarity map
         which are saved as .png images.
 
         Parameters
@@ -501,8 +516,8 @@ class DiSetupDialog(QDialog):
         ax.add_artist(scalebar)
         fig.savefig(
             path.join(
-                self.results_dir,
-                f"osm_{crystal_map.phases[crystal_map.phases.ids[0]].name}.png",
+                filedir,
+                f"{filename}.png",
             ),
             **savefig_kwargs,
         )
@@ -511,7 +526,7 @@ class DiSetupDialog(QDialog):
 
     def save_inverse_pole_figure(self, crystal_map: CrystalMap):
         """
-        Takes in a crystal map and generates an Inverse Pole Figure map which is saves as a .png image.
+        Takes in a crystal map and generates an Inverse Pole Figure map which is saved as a .png image.
 
         Parameters
         ----------
@@ -519,19 +534,20 @@ class DiSetupDialog(QDialog):
             class orix.crystal_maps.CrystalMap
         """
 
-        phase_id = crystal_map.phases.ids[0]
-        ckey = plot.IPFColorKeyTSL(crystal_map.phases[phase_id].point_group)
+        phase_id = crystal_map.phases_in_data.ids[0]
+        ckey = plot.IPFColorKeyTSL(crystal_map.phases_in_data[phase_id].point_group)
 
         fig = ckey.plot(return_figure=True)
         fig.savefig(
             path.join(
                 self.results_dir,
-                f"{crystal_map.phases[phase_id].point_group.name}_color_key_.png",
+                f"orientation_color_key_.png"
+                #f"{crystal_map.phases_in_data[phase_id].point_group.name}_color_key_.png",
             ),
             **savefig_kwargs,
         )
         rgb_all = np.zeros((crystal_map.size, 3))
-        for i, phase in crystal_map.phases:
+        for i, phase in crystal_map.phases_in_data:
             if i != -1:
                 rgb_i = ckey.orientation2color(crystal_map[phase.name].orientations)
                 rgb_all[crystal_map.phase_id == i] = rgb_i
@@ -610,7 +626,7 @@ class DiSetupDialog(QDialog):
 
         return xmaps_ref
 
-    def merge_crystal_maps(self, xmap_dict: dict) -> CrystalMap:
+    def merge_crystal_maps(self, xmap_dict: dict, save_dir: str) -> CrystalMap:
         """
         Takes in a dictionary with crystal maps and merges them in to one crystal map based on the matching score from dictionary indexing
 
@@ -653,7 +669,7 @@ class DiSetupDialog(QDialog):
             name = f"{name}xmap"
             io.save(
                 path.join(
-                    self.results_dir,
+                    save_dir,
                     f"{name}.{filetype}",
                 ),
                 merged,
@@ -680,7 +696,7 @@ class DiSetupDialog(QDialog):
 
         self.convention = self.ui.comboBoxConvention.currentText().upper()
         # Rebinning of signal
-        original_nav_shape = ebsd.axes_manager.signal_shape[::-1]
+        original_sig_shape = ebsd.axes_manager.signal_shape[::-1]
         if self.binning != "None":
             print("Rebinning EBSD signal...")
             print(f"Binning: {self.binning}")
@@ -758,7 +774,11 @@ class DiSetupDialog(QDialog):
                 except Exception as e:
                     raise e
             if self.options["osm"]:
-                self.save_orientation_similairty_map(xmaps[f"{ph.name}"])
+                if len(self.phaseList.ids) == 1:
+                    save_dir = self.results_dir
+                else:
+                    save_dir = self.raw_data_dir
+                self.save_orientation_similarty_map(xmaps[f"{ph.name}"], save_dir, f"osm_{ph.name}")
 
         if self.refine:
             xmaps_ref = self.refine_orientations(xmaps, detector, ebsd)
@@ -780,11 +800,11 @@ class DiSetupDialog(QDialog):
                         self.save_ncc_figure(xmaps_ref[ph.name], f"{ph.name}_refined")
 
                 # Save DI parameters
-                self.save_di_settings(xmaps_ref, ebsd, original_nav_shape)
+                self.save_di_settings(xmaps_ref, ebsd, original_sig_shape)
 
             else:
                 # Save DI settings to file
-                self.save_di_settings(xmaps, ebsd, original_nav_shape)
+                self.save_di_settings(xmaps, ebsd, original_sig_shape)
 
                 # Save IPF of unrefined crystal map
                 if self.options["ipf"]:
@@ -802,10 +822,14 @@ class DiSetupDialog(QDialog):
         if len(self.phaseList.ids) > 1:
             print("Merging crystal maps")
             if self.refine:
-                merged = self.merge_crystal_maps(xmaps_ref)
+                merged = self.merge_crystal_maps(xmaps_ref, self.results_dir)
+                merged_underfined = self.merge_crystal_maps(xmaps, self.raw_data_dir)
+                if self.options["osm"]:
+                    self.save_orientation_similarty_map(merged_underfined, self.results_dir, "osm_merged")
             else:
-                merged = self.merge_crystal_maps(xmaps)
-
+                merged = self.merge_crystal_maps(xmaps, self.results_dir)
+                if self.options["osm"]:
+                    self.save_orientation_similarty_map(merged, self.results_dir, "osm_merged")
             ### IPF map
             if self.options["ipf"]:
                 self.save_inverse_pole_figure(merged)
@@ -822,7 +846,7 @@ class DiSetupDialog(QDialog):
             if self.options["ncc"]:
                 self.save_ncc_figure(merged, "merged")
 
-            self.save_di_settings(merged, ebsd, original_nav_shape)
+            self.save_di_settings(merged, ebsd, original_sig_shape)
 
         print(
             f"Dictionary indexing complete, results stored in {path.basename(self.results_dir)}"
@@ -846,7 +870,7 @@ class DiSetupDialog(QDialog):
 
         self.setting_file.save()
 
-    def save_di_settings(self, xmap, ebsd, original_nav_shape):
+    def save_di_settings(self, xmap, ebsd, original_sig_shape):
         self.di_setting_file = SettingFile(
             path.join(self.results_dir, "indexing_parameters.txt")
         )
@@ -874,11 +898,14 @@ class DiSetupDialog(QDialog):
         )
         self.di_setting_file.write(
             "Navigation shape (rows, columns)",
-            original_nav_shape,
+            ebsd.axes_manager.navigation_shape[::-1],
         )
         self.di_setting_file.write(
-            "Signal shape (rows, columns)", ebsd.axes_manager.signal_shape[::-1]
+            "Signal shape (rows, columns)", original_sig_shape
         )
+        self.di_setting_file.write("Signal binning", self.binning)
+        if self.binning != "None":
+            self.di_setting_file.write("Binned signal shape (rows, columns)", ebsd.axes_manager.signal_shape)
         self.di_setting_file.write("Step size", f"{ebsd.axes_manager[0].scale} um\n")
 
         ### DI parameteres

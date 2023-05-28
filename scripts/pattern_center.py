@@ -6,27 +6,27 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox
 import numpy as np
 
 from diffsims.crystallography import ReciprocalLatticeVector
+
+
 from pyebsdindex import ebsd_index, pcopt
 from orix.quaternion import Rotation
+from scripts.pc_from_wd import pc_from_wd
 
 from utils import FileBrowser, SettingFile, get_setting_file_bottom_top
 from ui.ui_pattern_center import Ui_PatternCenter
 
 progressbar_bool = False
 
-FCC = ["ni", "al", "austenite", "cu", "si", "ag", "cu"]
-BCC = ["ferrite"]
+ALLOWED_SPACE_GROUPS = ["Fm-3m", "Im-3m"] # FCC and BCC
+#FCC = ["ni", "al", "austenite", "cu", "si", "ag", "cu"]
+#BCC = ["ferrite"]
 
 
 def find_hkl(phase):
-    # TETRAGONAL = ["steel_sigma"]
-    if phase.lower() in FCC:
+    if phase.space_group.short_name == ALLOWED_SPACE_GROUPS[0]: #FCC
         return [[1, 1, 1], [2, 0, 0], [2, 2, 0], [3, 1, 1]]
-    elif phase.lower() in BCC:
+    elif phase.space_group.short_name == ALLOWED_SPACE_GROUPS[1]: #BCC
         return [[0, 1, 1], [0, 0, 2], [1, 1, 2], [0, 2, 2]]
-    # experimental support for TETRAGONAL sigma phase, not sure if correct...
-    # elif phase.lower() in TETRAGONAL:
-    #    return [[1, 1, 0], [2, 0, 0], [1, 0, 1], [2, 1, 0], [1, 1, 1], [2, 2, 0], [2, 1, 1]]
 
 
 class PatterCenterDialog(QDialog):
@@ -66,17 +66,14 @@ class PatterCenterDialog(QDialog):
         try:
             self.pc = np.array(eval(self.setting_file.read("PC")))
         except:
-            if (
-                self.s_cal.metadata.Acquisition_instrument.SEM.microscope
-                == "ZEISS SUPRA55 VP"
-            ):
-                self.pc = [
-                    0.5605 - 0.0017 * float(self.working_distance),
-                    1.2056 - 0.0225 * float(self.working_distance),
-                    0.483,
-                ]
-            else:
-                self.pc = np.array([0.5000, 0.5000, 0.5000])
+            try:
+                microscope = self.s_cal.metadata.Acquisition_instrument.SEM.microscope
+                working_distance = (
+                    self.s_cal.metadata.Acquisition_instrument.SEM.working_distance
+                )
+                self.pc = pc_from_wd(microscope, working_distance, self.convention)
+            except:
+                self.pc = np.array((0.5000, 0.8000, 0.5000))
 
         if self.convention == "TSL":
             # Store TSL convention in BRUKER convention
@@ -92,16 +89,17 @@ class PatterCenterDialog(QDialog):
                 mp_path = self.setting_file.read(f"Master pattern {i}")
                 try:
                     mp = kp.load(mp_path)
-                except Exception as e:
-                    print(e.with_traceback(None))
-                    continue
+                except IOError as ioe:
+                    raise ioe
                 if not len(mp.phase.name):
                     mp.phase.name = path.dirname(mp_path).split("/").pop()
                 self.mp_paths[mp.phase.name] = mp_path
                 self.ui.listPhases.addItem(mp.phase.name)
-                if mp.phase.name not in FCC + BCC:
+                if mp.phase.space_group.short_name not in ALLOWED_SPACE_GROUPS:
                     self.ui.listPhases.item(i - 1).setFlags(Qt.NoItemFlags)
                 i += 1
+            except IOError as ioe:
+                raise ioe
             except:
                 break
 
@@ -245,7 +243,7 @@ class PatterCenterDialog(QDialog):
                 self.is_mp_paths_updated = True
 
             self.fileBrowserOF.setDefaultDir(path.dirname(mp_path))
-            if phase_name not in FCC + BCC:
+            if mp.phase.space_group.short_name not in ALLOWED_SPACE_GROUPS:
                 self.ui.listPhases.item(len(self.mp_paths.keys()) - 1).setFlags(
                     Qt.NoItemFlags
                 )
@@ -327,21 +325,23 @@ class PatterCenterDialog(QDialog):
 
         ref_dict = {}
         for name in self.mp_paths.keys():
-            if name not in FCC + BCC:
+            if mp_dict[name].phase.space_group.short_name not in ALLOWED_SPACE_GROUPS:
                 continue
             ref_i = ReciprocalLatticeVector(
-                phase=mp_dict[name].phase, hkl=find_hkl(name)
+                phase=mp_dict[name].phase, hkl=find_hkl(mp_dict[name].phase)
             )
             ref_i = ref_i.symmetrise().unique()
             ref_dict[name] = ref_i
 
         self.simulator_dict = {}
         for name in self.mp_paths.keys():
-            if name not in FCC + BCC:
+            if mp_dict[name].phase.space_group.short_name not in ALLOWED_SPACE_GROUPS:
                 continue
             self.simulator_dict[name] = kp.simulations.KikuchiPatternSimulator(
                 ref_dict[name]
             )
+
+        self.mp_dict = mp_dict
 
         # To prevent the program from retrieving mp data when not needed:
         self.is_mp_paths_updated = False
@@ -373,7 +373,7 @@ class PatterCenterDialog(QDialog):
 
         sys.stdout = open(devnull, "w")
         for name in self.mp_paths.keys():
-            if name not in FCC + BCC:
+            if self.mp_dict[name].phase.space_group.short_name not in ALLOWED_SPACE_GROUPS:
                 continue
             geosim_dict[name] = self.simulator_dict[name].on_detector(detector, rot)
 

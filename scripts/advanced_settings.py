@@ -1,12 +1,15 @@
 import json
+import platform
 from os.path import exists
 
 import matplotlib.colors as mplcolors
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QMessageBox
+from tabulate import tabulate
 
 from scripts.color_picker import ColorPicker
+from scripts.pc_from_wd import wdCalibration
 from ui.ui_advanced_settings import Ui_AdvancedSettings
 from utils import FileBrowser, SettingFile
 
@@ -38,6 +41,21 @@ class AdvancedSettingsDialog(QDialog):
         self.ui.directoryBox.clicked.connect(lambda: self.toggleDefaultDirectory())
         self.ui.browseDirectoryButton.clicked.connect(lambda: self.browseDirectory())
         self.ui.colorTreeWidget.doubleClicked.connect(lambda: self.colorPicker())
+
+        self.ui.pushButtonAddNewMicroscope.clicked.connect(
+            lambda: self.addNewMicroscope()
+        )
+        self.ui.pushButtonRemoveMicroscope.clicked.connect(
+            lambda: self.removeMicroscope()
+        )
+
+        self.ui.listWidgetMicroscopes.itemDoubleClicked.connect(
+            lambda: self.display_calibration_params()
+        )
+
+        if platform.system().lower() == "darwin":
+            self.ui.lightRadioButton.setDisabled(True)
+            self.ui.darkRadioButton.setDisabled(True)
 
     def addFileType(self):
         if self.ui.fileTypeLineEdit.text():
@@ -97,6 +115,48 @@ class AdvancedSettingsDialog(QDialog):
     def setRefine(self):
         self.refine = self.ui.checkBoxRefine.isChecked()
 
+    def addNewMicroscope(self):
+        wdDialog = wdCalibration(parent=self)
+        wdDialog.exec()
+        try:
+            self.setting_file.write(wdDialog.microscope_name, wdDialog.pc_curve)
+            if wdDialog.microscope_name not in self.microscopes:
+                self.ui.listWidgetMicroscopes.addItem(wdDialog.microscope_name)
+                self.microscopes.append(wdDialog.microscope_name)
+        except:
+            pass
+
+    def removeMicroscope(self):
+        try:
+            microscope = self.ui.listWidgetMicroscopes.currentItem().text()
+            self.microscopes.pop(self.microscopes.index(microscope))
+            self.ui.listWidgetMicroscopes.takeItem(self.ui.listWidgetMicroscopes.currentRow())
+            self.setting_file.remove(microscope)
+        except AttributeError:
+            pass
+        except Exception as e:
+            raise e
+        if len(self.microscopes) == 0:
+            self.ui.pushButtonRemoveMicroscope.setEnabled(False)
+        else:
+            self.ui.pushButtonRemoveMicroscope.setEnabled(True)
+
+    def display_calibration_params(self):
+        microscope = self.ui.listWidgetMicroscopes.currentItem().text()
+        pc_curve = eval(self.setting_file.read(microscope))
+        pc_list = [
+            ["", "Slope", "Intersept"],
+            ["X: ", pc_curve[0][0], pc_curve[0][1]],
+            ["Y: ", pc_curve[1][0], pc_curve[1][1]],
+            ["Z: ", pc_curve[2][0], pc_curve[2][1]],
+        ]
+
+        QMessageBox.about(
+            self,
+            microscope,
+            tabulate(pc_list, headers="firstrow"),
+        )
+
     def colorPicker(self):
         if self.ui.colorTreeWidget.currentItem().parent() is None:
             return
@@ -125,6 +185,12 @@ class AdvancedSettingsDialog(QDialog):
             self.convention = self.setting_file.read("Convention")
         except:
             self.convention = "TSL"
+        try:
+            theme = self.setting_file.read("theme")
+            if theme == "dark":
+                self.ui.darkRadioButton.setChecked(True)
+        except:
+            self.theme = "light"
 
         file_types_str = self.setting_file.read("File Types")
         self.file_types = json.loads(file_types_str)
@@ -154,7 +220,7 @@ class AdvancedSettingsDialog(QDialog):
                 self.refine = True
             else:
                 self.refine = False
-                
+
         except:
             self.refine = False
 
@@ -174,6 +240,15 @@ class AdvancedSettingsDialog(QDialog):
                 1, QColor(mplcolors.to_hex(c))
             )
 
+        try:
+            self.microscopes = self.setting_file.read("MICROSCOPES").split(", ")
+            self.microscopes = [ms for ms in self.microscopes if ms]
+            self.ui.listWidgetMicroscopes.addItems(self.microscopes)
+        except:
+            self.microscopes = []
+        if not len(self.microscopes):
+            self.ui.pushButtonRemoveMicroscope.setEnabled(False)
+
     def saveSettings(self):
         if exists(self.ui.directoryEdit.text()) and self.directory:
             self.directory = self.ui.directoryEdit.text()
@@ -187,6 +262,12 @@ class AdvancedSettingsDialog(QDialog):
         self.setting_file.write("Refine orientations", str(self.refine))
         self.setting_file.write("Default Directory", str(self.directory))
         self.setting_file.write("Colors", json.dumps(self.colors))
+        if self.ui.darkRadioButton.isChecked():
+            self.setting_file.write("theme", "dark")
+        else:
+            self.setting_file.write("theme", "light")
+
+        self.setting_file.write("MICROSCOPES", ", ".join(self.microscopes))
         self.setting_file.save()
 
     def createSettingsFile(self):

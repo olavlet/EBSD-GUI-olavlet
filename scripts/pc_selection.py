@@ -19,18 +19,7 @@ from utils import FileBrowser, SettingFile, sendToJobManager
 
 progressbar_bool = False
 
-FCC = ["ni", "al", "austenite", "cu", "si", "ag", "cu"]
-BCC = ["ferrite"]
-
-def find_hkl(phase):
-    #TETRAGONAL = ["steel_sigma"]
-    if phase.lower() in FCC:
-        return [[1, 1, 1], [2, 0, 0], [2, 2, 0], [3, 1, 1]]
-    elif phase.lower() in BCC:
-        return [[0, 1, 1], [0, 0, 2], [1, 1, 2], [0, 2, 2]]
-    #experimental support for TETRAGONAL sigma phase, not sure if correct...
-    #elif phase.lower() in TETRAGONAL:
-    #    return [[1, 1, 0], [2, 0, 0], [1, 0, 1], [2, 1, 0], [1, 1, 1], [2, 2, 0], [2, 1, 1]]
+ALLOWED_SPACE_GROUPS = ["Fm-3m", "Im-3m"] #FCC, BCC
 
 class PCSelectionDialog(QDialog):
     def __init__(self, parent=None, pattern_path=None):
@@ -82,7 +71,7 @@ class PCSelectionDialog(QDialog):
                 microscope = self.s.metadata.Acquisition_instrument.SEM.microscope
                 self.pc = pc_from_wd(microscope, working_distance, self.convention)
             except:
-                self.pc = (0.5000, 0.5000, 0.5000)
+                self.pc = (0.5000, 0.8000, 0.5000)
         
         self.updatePCSpinBox()
         
@@ -94,17 +83,18 @@ class PCSelectionDialog(QDialog):
                 mp_path = self.setting_file.read(f"Master pattern {i}")
                 try:
                     mp = kp.load(mp_path, lazy=True)
-                except Exception as e:
-                    print(e.with_traceback(None))
-                    continue
+                except IOError as ioe:
+                    raise ioe
                 if not len(mp.phase.name):
                     mp.phase.name = path.dirname(mp_path).split("/").pop()
                 self.mp_paths[mp.phase.name] = mp_path
                 self.ui.listPhases.addItem(mp.phase.name)
-                if mp.phase.name not in FCC + BCC:
+                space_group = mp.phase.space_group.short_name
+                if space_group not in ALLOWED_SPACE_GROUPS:
                     self.ui.listPhases.item(i-1).setFlags(Qt.NoItemFlags)
                 i += 1
-                
+            except IOError as ioe:
+                raise ioe
             except:
                 break
 
@@ -139,7 +129,8 @@ class PCSelectionDialog(QDialog):
                 self.ui.listPhases.addItem(phase_name)
             
             self.fileBrowserOD.setDefaultDir(path.dirname(mp_path))
-            if phase_name not in FCC + BCC:
+            space_group = mp.phase.space_group.short_name
+            if space_group not in ALLOWED_SPACE_GROUPS:
                 self.ui.listPhases.item(len(self.mp_paths.keys())-1).setFlags(Qt.NoItemFlags)
             else:
                 self.phase = phase_name
@@ -375,7 +366,7 @@ class PCSelectionDialog(QDialog):
         self.inlier_limit = float(self.ui.spinBoxInlier.value())
 
         sendToJobManager(
-            job_title=f"Pattern center optimization {self.pattern_name}",
+            job_title=f"PC optimization {self.pattern_name}",
             output_path=save_dir,
             listview=self.parentWidget().ui.jobList,
             func=self.patternCenterOpimization,
@@ -430,16 +421,18 @@ class PCSelectionDialog(QDialog):
 
         FCCavailable, BCCavailable = True, True
         for name, h5path in self.mp_paths.items():
-            if name in FCC and FCCavailable:
-                self.mp_dict[name] = self.loadMP(name, h5path)
+            mp = self.loadMP(name, h5path)
+            space_group = mp.phase.space_group.short_name
+            if space_group == ALLOWED_SPACE_GROUPS[0] and FCCavailable: #FCC
+                self.mp_dict[name] = mp
                 FCCavailable = False
-            elif name in BCC and BCCavailable:
-                self.mp_dict[name] = self.loadMP(name, h5path)
+            elif space_group == ALLOWED_SPACE_GROUPS[1] and BCCavailable: #BCC
+                self.mp_dict[name] = mp
                 BCCavailable = False
-            elif name in FCC:
+            elif space_group == ALLOWED_SPACE_GROUPS[0]: #FCC
                 FCCavailable = False
                 print("Hough indexing only supports one FCC/BCC phase. Using the first FCC phase for patter center optimization.")
-            elif name in BCC:
+            elif space_group == ALLOWED_SPACE_GROUPS[1]: #BCC
                 BCCavailable = False
                 print("Hough indexing only supports one FCC/BCC phase. Using the first BCC phase for patter center optimization.")
             else:

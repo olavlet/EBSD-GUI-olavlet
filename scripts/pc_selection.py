@@ -19,7 +19,7 @@ from utils import FileBrowser, SettingFile, sendToJobManager
 
 progressbar_bool = False
 
-ALLOWED_SPACE_GROUPS = ["Fm-3m", "Im-3m"] #FCC, BCC
+ALLOWED_SPACE_GROUPS = ["Fm-3m", "Im-3m"] # FCC, BCC
 
 class PCSelectionDialog(QDialog):
     def __init__(self, parent=None, pattern_path=None):
@@ -551,7 +551,6 @@ class PCSelectionDialog(QDialog):
             
         # generate figures
         sim_i = simulator_dict.values()
-        #sim_cal_ref = sim_i.on_detector(det_cal_ref, xmap_cal_ref.rotations.reshape(*xmap_cal_ref.shape))
         sim_cal_ref_dict = {}
         for phase, sim_i in simulator_dict.items():
             sim_cal_ref = sim_i.on_detector(det_cal_ref, refined_xmap.rotations.reshape(*refined_xmap.shape))
